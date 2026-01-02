@@ -5,7 +5,7 @@
 #include "../drivers/Buzzer.h"
 #include "../app/FanController.h"
 
-// --- OBIEKTY GLOBALNE ---
+
 TempSensor sens;
 FanMotor mot;
 Buzzer buzz;
@@ -26,16 +26,35 @@ void handleCli() {
     if (Serial.available() > 0) {
         String cmd = Serial.readStringUntil('\n');
         cmd.trim();
-        
+
+        //Stat
         if (cmd == "STAT") {
             char buf[64];
             fanCtrl.getStatus(buf);
             Serial.println(buf);
         } 
+        
+        //Help
+        if (cmd == "HELP" || cmd == "?") {
+            Serial.println("--- DOSTEPNE KOMENDY ---");
+            Serial.println(" STAT         - Pokaz status systemu (JSON-like)");
+            Serial.println(" OFFSET <val> - Dodaj stala wartosc do PWM (-255..255)");
+            Serial.println(" HELP         - Pokaz te liste");
+            Serial.println("------------------------");
+        }
+
+        //Offset
         else if (cmd.startsWith("OFFSET ")) {
             int val = cmd.substring(7).toInt();
-            fanCtrl.setCurveOffset(val);
-            Serial.printf("ACK: Curve offset applied: %d\n", val);
+            if (val >= -255 && val <= 255) {
+                fanCtrl.setCurveOffset(val);
+                Serial.printf("OK: Offset ustawiony na %d\n", val);
+            } else {
+                Serial.println("ERR: Wartosc poza zakresem (-255..255)");
+            }
+        }
+
+        //Błędy
         }
         else {
             Serial.println("ERR: Unknown command");
@@ -44,7 +63,6 @@ void handleCli() {
 }
 
 void loop() {
-    // Non-blocking scheduler
     unsigned long now = millis();
     if (now - lastTick >= TEMP_UPDATE_MS) {
         lastTick = now;
