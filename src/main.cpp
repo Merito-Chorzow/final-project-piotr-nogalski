@@ -1,62 +1,68 @@
 #include <Arduino.h>
 #include "Config.h"
 
+unsigned long lastUpdate = 0;
+float currentTemp = 0;
+int targetDuty = 0;
+int actualDuty = 0;
 
-float temperatura = 0;
-int pwm_cel = 0;
-int pwm_obecny = 0;
-bool blad_sensora = false;
+// Funkcja pomocnicza do odczytu temperatury
+float readTemp() {
+    int raw = analogRead(PIN_TEMP_SENSOR);
+    // Prosta weryfikacja błędu
+    if (raw < SENSOR_MIN_VALID || raw > SENSOR_MAX_VALID) return -1.0;
+    return (raw / 4095.0f) * 100.0f;
+}
 
 void setup() {
-  Serial.begin(SERIAL_BAUD);
-  Serial.println("INICJALIZACJA SYSTEMU (Wersja TESTOWA v0.1)...");
-
-  pinMode(PIN_TEMP_SENSOR, INPUT);
-  pinMode(PIN_FAULT_LED, OUTPUT);
-  pinMode(PIN_BUZZER, OUTPUT);
-
-  ledcAttach(PIN_PWM_FAN, PWM_FREQ, PWM_RES);
-  
-  Serial.println("Setup gotowy.");
+    Serial.begin(SERIAL_BAUD);
+    ledcAttach(PIN_PWM_FAN, PWM_FREQ, PWM_RES);
+    pinMode(PIN_FAULT_LED, OUTPUT);
+    pinMode(PIN_BUZZER, OUTPUT);
+    Serial.println("System v0.2: Non-blocking with Ramp.");
 }
 
 void loop() {
-  int surowe_adc = analogRead(PIN_TEMP_SENSOR);
-  
-  if (surowe_adc < SENSOR_MIN_VALID || surowe_adc > SENSOR_MAX_VALID) {
-    blad_sensora = true;
-  } else {
-    blad_sensora = false;
+    unsigned long now = millis();
 
-    temperatura = (surowe_adc / 4095.0f) * 100.0f;
-  }
+    // Wykonuj logikę co 100ms (zamiast delay)
+    if (now - lastUpdate >= TEMP_UPDATE_MS) {
+        lastUpdate = now;
 
-  if (blad_sensora) {
-    pwm_cel = 255; // Tryb awaryjny
-    digitalWrite(PIN_FAULT_LED, HIGH);
-    tone(PIN_BUZZER, 2000); 
-  } else {
-    digitalWrite(PIN_FAULT_LED, LOW);
-    noTone(PIN_BUZZER);
+        float t = readTemp();
 
-    if (temperatura < 25) pwm_cel = 0;
-    else if (temperatura < 40) pwm_cel = 100;
-    else if (temperatura < 60) pwm_cel = 200;
-    else pwm_cel = 255;
-  }
+        if (t < 0) {
+            // Tryb awaryjny
+            targetDuty = 255;
+            digitalWrite(PIN_FAULT_LED, HIGH);
+            tone(PIN_BUZZER, 1000);
+        } else {
+            currentTemp = t;
+            digitalWrite(PIN_FAULT_LED, LOW);
+            noTone(PIN_BUZZER);
 
-  if (pwm_obecny < pwm_cel) {
-    pwm_obecny += RAMP_STEP;
-  } else if (pwm_obecny > pwm_cel) {
-    pwm_obecny -= RAMP_STEP;
-  }
+            // Proste mapowanie
+            if (currentTemp < 25) targetDuty = 0;
+            else if (currentTemp < 45) targetDuty = 120;
+            else targetDuty = 255;
+        }
 
-  ledcWrite(PIN_PWM_FAN, pwm_obecny);
+        // --- ALGORYTM RAMPY (Slew-Rate Limiter) ---
+        // Zamiast actualDuty = targetDuty, zmieniamy wartość o mały krok
+        if (actualDuty < targetDuty) {
+            actualDuty += RAMP_STEP;
+            if (actualDuty > targetDuty) actualDuty = targetDuty;
+        } 
+        else if (actualDuty > targetDuty) {
+            actualDuty -= RAMP_STEP;
+            if (actualDuty < targetDuty) actualDuty = targetDuty;
+        }
 
-  Serial.print("Temp: "); Serial.print(temperatura);
-  Serial.print(" | PWM: "); Serial.print(pwm_obecny);
-  if (blad_sensora) Serial.print(" !!! BLAD !!!");
-  Serial.println();
+        ledcWrite(PIN_PWM_FAN, actualDuty);
 
-  delay(100); 
+        // Debugowanie postępów rampy
+        Serial.printf("T: %.1f | Cel: %d | Real: %d\n", currentTemp, targetDuty, actualDuty);
+    }
+ 
+    // "TODO: Implementacja CLI w następnym etapie"
 }
